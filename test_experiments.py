@@ -9,10 +9,10 @@ skew_factor = 0.0
 fullread = "true"
 cpu_exec_num_threads = 32
 num_epochs = 5
-num_txns = 100000
+num_txns = 100
 split_fields = "true"
 commutative_ops = "false"
-num_records = 10000000
+num_records = 1000
 exec_device = "gpu"
 num_repeat = 1
 
@@ -71,7 +71,7 @@ def epic_tpcc_experiment():
     database = "epic"
     benchmark = "tpcc"
 
-    for num_warehouses in [64]:
+    for num_warehouses in [4]:
         for repeat in range(0, num_repeat):
             print_experiment_count()
             cmd = cmd_template.format(epic_driver_path, benchmark, database, num_warehouses, skew_factor,
@@ -100,7 +100,7 @@ def epic_tpcc_full_experiment():
     database = "epic"
     benchmark = "tpccfull"
 
-    for num_warehouses in [64]:
+    for num_warehouses in [4]:
         for repeat in range(0, num_repeat):
             print_experiment_count()
             cmd = cmd_template.format(epic_driver_path, benchmark, database, num_warehouses, skew_factor,
@@ -128,7 +128,7 @@ def epic_tpcc_full_experiment():
 
 def gacco_ycsb_experiment():
     database = "gacco"
-    num_txns = 32768
+    num_txns = 327
 
     for benchmark in ["ycsbf"]:
         for skew_factor in [0.99]:
@@ -159,11 +159,11 @@ def gacco_ycsb_experiment():
 
 def gacco_tpcc_experiment():
     database = "gacco"
-    num_txns = 32768
+    num_txns = 327
 
     for benchmark in ["tpccn", "tpccp"]:
         for commutative_ops in ["true", "false"]:
-            for num_warehouses in [64]:
+            for num_warehouses in [4]:
                 for repeat in range(0, num_repeat):
                     print_experiment_count()
                     cmd = cmd_template.format(epic_driver_path, benchmark, database, num_warehouses, skew_factor,
@@ -194,7 +194,7 @@ def epic_cpu_tpcc_experiment():
     benchmark = "tpcc"
     exec_device = "cpu"
 
-    for num_warehouses in [64]:
+    for num_warehouses in [4]:
         for repeat in range(0, num_repeat):
             print_experiment_count()
             cmd = cmd_template.format(epic_driver_path, benchmark, database, num_warehouses, skew_factor,
@@ -225,7 +225,7 @@ def epic_cpu_tpcc_full_experiment():
     benchmark = "tpccfull"
     exec_device = "cpu"
 
-    for num_warehouses in [64]:
+    for num_warehouses in [4]:
         for repeat in range(0, num_repeat):
             print_experiment_count()
             cmd = cmd_template.format(epic_driver_path, benchmark, database, num_warehouses, skew_factor,
@@ -289,8 +289,8 @@ def epic_ycsb_epoch_size_experiment():
     benchmark = "ycsbf"
 
     skew_factor_range = [0.99, 0.0]
-    num_txns_ranges = [[70000],
-                       [200000]]
+    num_txns_ranges = [[70],
+                       [200]]
 
     for skew_factor, num_txns_ranges in zip(skew_factor_range, num_txns_ranges):
         for num_txns in num_txns_ranges:
@@ -323,8 +323,8 @@ def epic_tpcc_epoch_size_experiment():
     benchmark = "tpcc"
 
     num_warehouses_range = [1, 64]
-    num_txns_ranges = [[40000],
-                       [200000]]
+    num_txns_ranges = [[40],
+                       [200]]
 
     for num_warehouses, num_txns_range in zip(num_warehouses_range, num_txns_ranges):
         for num_txns in num_txns_range:
@@ -384,8 +384,8 @@ def gacco_tpcc_epoch_size_experiment():
     database = "gacco"
 
     num_warehouses_range = [1, 64]
-    num_txns_ranges = [[4000],
-                       [25000]]
+    num_txns_ranges = [[40],
+                       [250]]
 
     for benchmark in ["tpccn", "tpccp"]:
         for num_warehouses, num_txns_range in zip(num_warehouses_range, num_txns_ranges):
@@ -420,8 +420,8 @@ def gacco_ycsb_epoch_size_experiment():
     benchmark = "ycsbf"
 
     skew_factor_range = [0.99, 0.0]
-    num_txns_ranges = [[6000],
-                       [45000]]
+    num_txns_ranges = [[60],
+                       [450]]
 
     for skew_factor, num_txns_ranges in zip(skew_factor_range, num_txns_ranges):
         for num_txns in num_txns_ranges:
