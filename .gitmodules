@@ -6,7 +6,8 @@
         url = https://github.com/owensgroup/SlabHash.git
 [submodule "third_party/cuco"]
         path = third_party/cuco
-        url = https://github.com/NVIDIA/cuCollections.git
+	url = git@github.com:ChrisJTab/cuCollections.git
+	branch = base-c5f94e5
 [submodule "third_party/masstree"]
         path = third_party/masstree
         url = https://github.com/uoft-felis/masstree.git
