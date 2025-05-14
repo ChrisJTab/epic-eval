@@ -16,6 +16,10 @@ namespace epic::ycsb {
 struct YcsbConfig
 {
     static constexpr size_t num_ops_per_txn = 10;
+    /*
+    Example: If we defined txn_mix = {50, 50, 0, 0}, then the transaction mix would be: 50% reads, 50% writes, 0% rmws, 0% inserts
+    rmws are read-modify-writes
+    */
 
     struct YcsbTxnMix
     {

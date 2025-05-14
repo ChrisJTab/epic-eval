@@ -43,12 +43,14 @@ private:
     TpccTxnParamArrayT execution_param_input;
     TpccTxnExecPlanArrayT execution_plan_input;
 
-    PackedTxnBridge input_index_bridge;
+    // Addaptors needed to get some of the inputs to work
+    PackedTxnBridge input_index_bridge; // figures out if we need to move data around during the execution between the CPU and GPU
     PackedTxnBridge index_initialization_bridge;
     PackedTxnBridge index_execution_param_bridge;
     PackedTxnBridge initialization_execution_plan_bridge;
 
     std::shared_ptr<TpccIndex<TpccTxnArrayT, TpccTxnParamArrayT>> index;
+    // index matches the key to the rowID + handles the allocation and deletion of new rows
 
     std::shared_ptr<TableExecutionPlanner> warehouse_planner;
     std::shared_ptr<TableExecutionPlanner> district_planner;
@@ -61,12 +63,12 @@ private:
     std::shared_ptr<TableExecutionPlanner> stock_planner;
     std::shared_ptr<TpccSubmitter<TpccTxnParamArrayT>> submitter;
 
-    TpccRecords records;
+    TpccRecords records; // records stored in the database
     TpccVersions versions;
 
-    std::shared_ptr<Executor<TpccTxnParamArrayT, TpccTxnExecPlanArrayT>> executor;
+    std::shared_ptr<Executor<TpccTxnParamArrayT, TpccTxnExecPlanArrayT>> executor; // executes all the transactions
 
-    TpccCpuAuxIndex cpu_aux_index;
+    TpccCpuAuxIndex cpu_aux_index; // used for tpcc range queries
     TpccGpuAuxIndex<TpccTxnArrayT, TpccTxnParamArrayT> gpu_aux_index;
     TpccPackedTxnArrayBuilder packed_txn_array_builder;
 

@@ -183,6 +183,14 @@ static void __device__ __forceinline__ prepareSubmitTpccTxn(int txn_id, StockLev
     num_ops.stock_num_ops[txn_id] = txn->num_items;
 }
 
+/*
+Before executing transactions on the GPU, we must determine how much work each transaction requires in terms of database operations. This function prepares metadata that will be used to:
+
+Preallocate resources for each table (e.g., warehouse, district, customer).
+Avoid race conditions by precomputing memory offsets.
+Enable efficient execution by defining the number of operations each transaction will perform.
+Minimize divergence in GPU execution by batching similar transactions together.
+*/
 template <typename GpuTxnArrayType>
 static __global__ void prepareSubmitTpccTxn(GpuTxnArrayType txn_array, TpccNumOps num_ops)
 {
@@ -355,11 +363,25 @@ static __global__ void submitTpccTxn(GpuTxnArrayType txn_array, TpccSubmitLocati
     }
 }
 
+/*
+For each of the tables it checks for all the transactions, how many rows or opetations do you need to add to the table
+by doing an inclusive scan
+
+This function submits TPC-C transactions to the GPU for execution.
+It handles GPU memory operations, inclusive scans, and transaction execution.
+
+For each batch of transactions, it does the following:
+1. Prepare transaction metadata
+2. launches a GPU kernel to initialize the transactions
+3. Performs inclusive scan to calculate the offset for each transaction
+4. Transfer the data between CPU and GPU
+5. Launches a GPU kernel to execute the transactions
+*/
 template <typename TxnParamArrayType>
 void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
 {
     auto &logger = Logger::GetInstance();
-
+    // track the number of operations for each TPCC table, stores counters for each transaction
     TpccNumOps num_ops = {.warehouse_num_ops = warehouse_submit_dest.d_num_ops,
         .district_num_ops = district_submit_dest.d_num_ops,
         .customer_num_ops = customer_submit_dest.d_num_ops,
@@ -369,13 +391,18 @@ void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
         .order_line_num_ops = order_line_submit_dest.d_num_ops,
         .item_num_ops = item_submit_dest.d_num_ops,
         .stock_num_ops = stock_submit_dest.d_num_ops};
-
+    // launch a kernel to prepare the transactions
     prepareSubmitTpccTxn<<<(txn_array.num_txns + 1024) / 1024, 1024, 0, std::any_cast<cudaStream_t>(cuda_streams[0])>>>(
         TpccGpuTxnArrayT(txn_array), num_ops);
 
     gpu_err_check(cudaGetLastError());
     gpu_err_check(cudaStreamSynchronize(std::any_cast<cudaStream_t>(cuda_streams[0])));
-
+    /*
+    This function performs an inclusive prefix sum (scan) on the number of operations for each transaction in a given TPCC table. 
+    The result assigns memory offsets for each transaction's operations.
+    */
+    // perform inclusive scan to calculate the offset for each transaction
+    // Instead of assigning each operation dynamically, this allows for a single, contiguous memory allocation.
     gpu_err_check(cub::DeviceScan::InclusiveSum(warehouse_submit_dest.temp_storage,
         warehouse_submit_dest.temp_storage_bytes, warehouse_submit_dest.d_num_ops,
         warehouse_submit_dest.d_op_offsets + 1, txn_array.num_txns, std::any_cast<cudaStream_t>(cuda_streams[0])));
@@ -403,7 +430,8 @@ void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
     gpu_err_check(cub::DeviceScan::InclusiveSum(stock_submit_dest.temp_storage, stock_submit_dest.temp_storage_bytes,
         stock_submit_dest.d_num_ops, stock_submit_dest.d_op_offsets + 1, txn_array.num_txns,
         std::any_cast<cudaStream_t>(cuda_streams[8])));
-
+    // copy the number of operations for each table to the host
+    // These asynchronously copy the final offset value from the GPU to the CPU
     gpu_err_check(
         cudaMemcpyAsync(&warehouse_submit_dest.curr_num_ops, warehouse_submit_dest.d_op_offsets + txn_array.num_txns,
             sizeof(uint32_t), cudaMemcpyDeviceToHost, std::any_cast<cudaStream_t>(cuda_streams[0])));
@@ -429,6 +457,7 @@ void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
     gpu_err_check(cudaMemcpyAsync(&stock_submit_dest.curr_num_ops, stock_submit_dest.d_op_offsets + txn_array.num_txns,
         sizeof(uint32_t), cudaMemcpyDeviceToHost, std::any_cast<cudaStream_t>(cuda_streams[8])));
 
+    // Set transaction submission locations
     TpccSubmitLocations locs = {
         .warehouse_offset = warehouse_submit_dest.d_op_offsets,
         .district_offset = district_submit_dest.d_op_offsets,
@@ -450,6 +479,11 @@ void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
         .stock_dest = stock_submit_dest.d_submitted_ops,
     };
 
+    /*
+    The submitTpccTxn function is responsible for scheduling and submitting TPCC transactions for execution on the GPU. 
+    It takes transactions that have already been prepared (via prepareSubmitTpccTxn) and translates them into operation 
+    commands that will be executed in the TPCC benchmark.
+    */
     submitTpccTxn<<<(txn_array.num_txns + 1024) / 1024, 1024, 0, std::any_cast<cudaStream_t>(cuda_streams[0])>>>(
         TpccGpuTxnArrayT(txn_array), locs);
 
@@ -458,7 +492,7 @@ void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
     {
         gpu_err_check(cudaStreamSynchronize(std::any_cast<cudaStream_t>(stream)));
     }
-
+    // log execution statistics
     logger.Info("num txns: {}", txn_array.num_txns);
     logger.Info("warehouse num ops: {}", warehouse_submit_dest.curr_num_ops);
     logger.Info("district num ops: {}", district_submit_dest.curr_num_ops);

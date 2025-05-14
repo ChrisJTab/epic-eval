@@ -1,6 +1,12 @@
 //
 // Created by Shujian Qian on 2023-09-20.
 //
+/*
+This file defines transaction bridges (TxnBridge and PackedTxnBridge) for efficient data transfers between CPU and GPU.
+TxnBridge: Transfers standard transactions (TxnArray)
+PackedTxnBridge: Transfers packed transactions (PackedTxnArray)
+Both bridges allow transactions to move between different devices (CPU ↔ GPU)
+*/
 
 #ifndef TXN_BRIDGE_H
 #define TXN_BRIDGE_H
@@ -62,7 +68,7 @@ public:
 //            {
 //                dest.Destroy();
 //            }
-            dest.txns = src.txns;
+            dest.txns = src.txns; // no need to copy, just point to the same memory
         }
         else
         {
@@ -71,7 +77,9 @@ public:
                 dest.Initialize();
             }
         }
-
+        /*
+        GPU operations are asynchronous, so a stream allows overlapping memory transfers with computation
+        */
         if (src.device == DeviceType::GPU || dest.device == DeviceType::GPU)
         {
             if (!copy_stream.has_value())

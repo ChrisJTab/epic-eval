@@ -34,6 +34,14 @@ TpccTxnType TpccTxnGenerator::getTxnType()
     return TpccTxnType::STOCK_LEVEL;
 }
 
+// This function generates a new TPC-C NewOrder transaction, filling in all required fields
+/*
+Creates a realistic NewOrder transaction for the TPC-C benchmark.
+Ensures unique items in the order.
+Implements 1% remote warehouse rule for multi-warehouse setups:
+    Adds a 1% chance of ordering from a remote warehouse.
+Randomizes quantities for realism.
+*/
 void TpccTxnGenerator::generateTxn(NewOrderTxnInput<FixedSizeTxn> *txn, uint32_t timestamp)
 {
     /* TODO: generate rollbacks? */

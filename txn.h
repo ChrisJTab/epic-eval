@@ -18,20 +18,21 @@
 
 namespace epic {
 
-struct BaseTxn
+struct BaseTxn // this is the base transaction class
 {
     uint32_t txn_type;
     uint8_t data[];
 };
 
-template<typename Txn>
-struct BaseTxnSize
+template<typename Txn> // makes Txn a placeholder for any type of transaction
+struct BaseTxnSize 
 {
     static constexpr size_t value = sizeof(BaseTxn) + sizeof(Txn);
+    // 
 };
 
 template<typename Txn>
-class TxnInputArray
+class TxnInputArray // To allocate and access transactions in an array, grouped by epochs
 {
 public:
     static constexpr size_t kBaseTxnSize = BaseTxnSize<Txn>::value;
@@ -39,7 +40,7 @@ public:
     size_t num_txns;
     size_t epochs;
     TxnInputArray(size_t num_txns, size_t epochs)
-        : num_txns(num_txns)
+        : num_txns(num_txns) // number of transactions per epoch
         , epochs(epochs)
     {
         txns = Malloc(kBaseTxnSize * num_txns * epochs);
@@ -58,7 +59,7 @@ public:
 };
 
 template<typename TxnType>
-class TxnArray
+class TxnArray // to manage transaction arrays for either CPU or GPU
 {
 public:
     static constexpr size_t kBaseTxnSize = BaseTxnSize<TxnType>::value;
@@ -66,8 +67,8 @@ public:
     size_t num_txns = 0;
     DeviceType device = DeviceType::CPU;
 
-    TxnArray() = default;
-    explicit TxnArray(size_t num_txns)
+    TxnArray() = default; // tells compiler to generate empty constructor automatically so that the object can be created without any arguments
+    explicit TxnArray(size_t num_txns) // the explicit keyword avoids implicit calls to the constructor
         : num_txns(num_txns)
         , device(DeviceType::CPU)
     {}
@@ -85,7 +86,7 @@ public:
         {
             txns = Malloc(kBaseTxnSize * num_txns);
         }
-#ifdef EPIC_CUDA_AVAILABLE
+#ifdef EPIC_CUDA_AVAILABLE // defined in CMakeLists.txt(the main one in the epic folder)
         else if (device_type == DeviceType::GPU)
         {
             txns = createGpuTxnArrayStorage(kBaseTxnSize * num_txns);
@@ -166,11 +167,12 @@ public:
 class TxnRunner
 {
 public:
-    void run(BaseTxn *txn);
+    void run(BaseTxn *txn); // ???? not sure if this is used anywhere
 };
 
 template<typename TxnType>
-class PackedTxnArray
+class PackedTxnArray // similar to TxnArray but stores transactions in a compact format
+// supports different size transactions
 {
 public:
     static constexpr uint32_t kBaseTxnSize = BaseTxnSize<TxnType>::value;
@@ -189,7 +191,7 @@ public:
 
     PackedTxnArray(uint32_t num_txns, DeviceType device, bool initialize = true)
         : num_txns(num_txns)
-        , capacity(kBaseTxnSize * num_txns)
+        , capacity(kBaseTxnSize * num_txns) // TxnArray doesnt have this
         , device(device)
     {
         if (!initialize)
@@ -200,7 +202,7 @@ public:
         if (device == DeviceType::CPU)
         {
             txns = static_cast<uint8_t *>(Malloc(capacity));
-            index = static_cast<uint32_t *>(Malloc((num_txns + 1) * sizeof(uint32_t)));
+            index = static_cast<uint32_t *>(Malloc((num_txns + 1) * sizeof(uint32_t))); // 
         }
 #ifdef EPIC_CUDA_AVAILABLE
         else if (device == DeviceType::GPU)

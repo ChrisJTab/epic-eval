@@ -1,19 +1,19 @@
 import os
 import subprocess
 
-benchmark = "tpcc"
-database = "epic"
-num_warehouses = 1
-skew_factor = 0.0
-fullread = "true"
-cpu_exec_num_threads = 32
-num_epochs = 5
-num_txns = 100000
-split_fields = "true"
-commutative_ops = "false"
-num_records = 10000000
-exec_device = "gpu"
-num_repeat = 3
+benchmark = "tpcc" # tpcc, ycsba, ycsbb, ycsbc, ycsbf
+database = "epic" # epic, gacco
+num_warehouses = 1 # 1, 2, 4, 8, 16, 32, 64
+skew_factor = 0.0 # 0.0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.99
+fullread = "true" # true, false
+cpu_exec_num_threads = 32 # 1, 2, 4, 8, 16, 32, 64
+num_epochs = 5 # 1, 2, 3, 4, 5
+num_txns = 100000 # 100000, 1000000, 10000000
+split_fields = "true" # true, false
+commutative_ops = "false" # true, false
+num_records = 10000000 # 10000000, 100000000, 1000000000
+exec_device = "gpu" # gpu, cpu
+num_repeat = 3 # 1, 2, 3, 4, 5
 
 epic_driver_path = "./build/epic_driver"
 epic_micro_driver_path = "./build/micro_driver"

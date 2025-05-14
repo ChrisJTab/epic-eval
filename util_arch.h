@@ -1,6 +1,7 @@
 //
 // Created by Shujian Qian on 2023-08-13.
 //
+// This file is used to define the configuration of the cache and warp size architecture for the Tpcc benchmark
 
 #ifndef UTIL_ARCH_H
 #define UTIL_ARCH_H
