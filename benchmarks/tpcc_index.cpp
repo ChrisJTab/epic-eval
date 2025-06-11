@@ -271,7 +271,7 @@ void TpccCpuIndex<TxnArrayType, TxnParamArrayType>::indexTxns(
     /* it's important to index writes before reads */
     for (uint32_t i = 0; i < tpcc_config.num_txns; ++i)
     {
-        BaseTxn *txn = txn_array.getTxn(i);
+        BaseTxn *txn = txn_array.getTxn(i); // 
         BaseTxn *txn_param = index_array.getTxn(i);
         indexTxnWrites(txn, txn_param, index_epoch_id);
     }

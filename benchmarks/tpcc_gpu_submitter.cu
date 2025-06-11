@@ -483,6 +483,9 @@ void TpccGpuSubmitter<TxnParamArrayType>::submit(TxnParamArrayType &txn_array)
     The submitTpccTxn function is responsible for scheduling and submitting TPCC transactions for execution on the GPU. 
     It takes transactions that have already been prepared (via prepareSubmitTpccTxn) and translates them into operation 
     commands that will be executed in the TPCC benchmark.
+
+    It basically creates the operations for each transaction based on the transaction type and the prepared metadata, then 
+    it writes it to the appropriate destination arrays for each table.
     */
     submitTpccTxn<<<(txn_array.num_txns + 1024) / 1024, 1024, 0, std::any_cast<cudaStream_t>(cuda_streams[0])>>>(
         TpccGpuTxnArrayT(txn_array), locs);

@@ -1,6 +1,22 @@
 //
 // Created by Shujian Qian on 2023-09-15.
 //
+/*
+Index: is a shared pointer who's type is chosen at runtime
+If the device is the CPU, then index = std::make_shared<TpccCpuIndex<TpccTxnArrayT, TpccTxnParamArrayT>>(config);
+This is a CPU hash table index
+
+If the device is the GPU, then index = std::make_shared<TpccGpuIndex<TpccTxnArrayT, TpccTxnParamArrayT>>(config);
+This is a GPU hash table index
+
+The index represents the primary key to recordID hash table that every transaction consults before it runs
+
+index->loadInitialData() — at start-up it bulk-loads the table keys so that the hash table already contains every pre-existing record.
+This is done in tpcc_index.cpp, where all data is loaded
+
+
+
+*/
 
 #include "benchmarks/tpcc.h"
 
@@ -296,33 +312,56 @@ TpccDb::TpccDb(TpccConfig config)
     }
 }
 
+/*
+ * generateTxns()
+ * --------------
+ * Pre-build the entire TPC-C workload in host RAM.
+ *
+ * For each epoch:
+ *   • Draw NUM_TXNS transaction types from the configured mix
+ *     (TpccTxnGenerator::getTxnType).
+ *   • Serialize each transaction into the epoch’s TpccTxnArrayT
+ *     as a variable-length blob:
+ *         | BaseTxn header | concrete txn payload |
+ *     The start offset of txn i is stored in index[i];
+ *     ‘size’ tracks the running end-of-blob cursor.
+ *   • No heap allocations occur after this; later stages can
+ *     DMA the packed byte-array to the GPU in one shot.
+ *
+ * Result: txn_array[epoch] now contains a fully-specified,
+ * reproducible batch ready for the indexing/initialization/
+ * execution pipeline.
+ * 
+ * Note that the actual generation/creation of the transaction occurs in tpcc_txn_gen.cpp,
+ * where the generator.generateTxn(txn_type, txn, timestamp); occurs.
+ */
 void TpccDb::generateTxns()
 {
-    auto &logger = Logger::GetInstance();
+    auto &logger = Logger::GetInstance(); 
 
-    TpccTxnGenerator generator(config);
-    for (size_t epoch = 0; epoch < config.epochs; ++epoch)
+    TpccTxnGenerator generator(config); // ① RNG + Zipf helpers seeded
+    for (size_t epoch = 0; epoch < config.epochs; ++epoch) // ② Outer loop: batches
     {
         logger.Info("Generating epoch {}", epoch);
         TpccTxnArrayT &txn_input_array = txn_array[epoch];
-        uint32_t curr_size = 0;
-        for (size_t i = 0; i < config.num_txns; ++i)
+        uint32_t curr_size = 0; // ③ Running write cursor
+        for (size_t i = 0; i < config.num_txns; ++i)  // ④ Inner loop: one txn
         {
 #if 0
             BaseTxn *txn = txn_array[epoch].getTxn(i);
             uint32_t timestamp = epoch * config.num_txns + i;
             generator.generateTxn(txn, timestamp);
 #else
-            TpccTxnType txn_type = generator.getTxnType();
+            TpccTxnType txn_type = generator.getTxnType();                                      // ⑤ Draw from mix %
             constexpr uint32_t txn_sizes[6] = {0, BaseTxnSize<NewOrderTxnInput<FixedSizeTxn>>::value,
                 BaseTxnSize<PaymentTxnInput>::value, BaseTxnSize<OrderStatusTxnInput>::value,
-                BaseTxnSize<DeliveryTxnInput>::value, BaseTxnSize<StockLevelTxnInput>::value};
-            txn_input_array.index[i] = curr_size;
-            curr_size += txn_sizes[static_cast<uint32_t>(txn_type)];
-            txn_input_array.size = curr_size;
-            BaseTxn *txn = txn_input_array.getTxn(i);
-            uint32_t timestamp = epoch * config.num_txns + i;
-            generator.generateTxn(txn_type, txn, timestamp);
+                BaseTxnSize<DeliveryTxnInput>::value, BaseTxnSize<StockLevelTxnInput>::value};  // per-type byte count
+            txn_input_array.index[i] = curr_size;                                               // ⑥ Offset table
+            curr_size += txn_sizes[static_cast<uint32_t>(txn_type)];                            // ⑦ Advance cursor
+            txn_input_array.size = curr_size;                                                   // ⑧ Total bytes so far
+            BaseTxn *txn = txn_input_array.getTxn(i);                                           // ⑨ Pointer into blob
+            uint32_t timestamp = epoch * config.num_txns + i;                                   // ⑩ Global timestamp
+            generator.generateTxn(txn_type, txn, timestamp);                                    // ⑪ Populate fields
 #endif
         }
     }
@@ -331,15 +370,60 @@ void TpccDb::generateTxns()
 void TpccDb::loadInitialData()
 {
     index->loadInitialData();
+    /*
+    The line above builds the primary key hash tables using static_map(GPU) or unordered_map(CPU) per base table
+    These maps support exact-match lookups and inserts for every read or write in every transaction
+
+    Bulk-inserts every existing row’s primary key into its table-specific hash map, assigning row-IDs 0…N-1. 
+    When epoch 1 starts, the primary index can answer “does key X exist and where?” immediately.
+    */
     // cpu_aux_index.loadInitialData(); /* cpu aux index replace by gpu aux index */
     gpu_aux_index.loadInitialData();
+
+    /*
+    A single GPU B-link-tree ("aux index") plus three side arrays
+    - co_btree maps each table to a dummy value and is ordered the OrderID so it can answer the "latest order of a customer" query
+
+    Basically, the primary index is for fast exact keys and rowID translation for all the tables
+    The auxiliary index is a fast range/topK query on customer order relationsips and cached order facts
+
+    Walks the order seed data (3 000 orders / district) and 
+    inserts (w,d,c,o) keys into co_btree so that a descending scan over the key space returns the most recent order first.
+    Fills the three side arrays with pre-generated num_items, customer_id, and 15 random item IDs per order. These arrays let kernels 
+    answer “how many items were in order O?” without touching the tables.
+
+    */
 }
 
+
+/*
+ * runBenchmark()
+ * --------------
+ * Orchestrates the full per-epoch pipeline:
+ *
+ *   1.  (optional) legacy CPU aux-index timing
+ *   2.  Copy packed txns of epoch e-1 to GPU and build GPU-friendly views
+ *   3.  GPU auxiliary index:
+ *         • insert NEW_ORDER keys into B-link tree
+ *         • service ORDER_STATUS / DELIVERY / STOCK_LEVEL range queries
+ *   4.  Primary hash indexing: logical PK → dense Row-ID
+ *   5.  Ship indexed payloads to the initialization stage
+ *   6.  Submit per-table op queues to planners
+ *   7.  Planners map Row-IDs to concrete addresses (RECORD_A/B, scratch),
+ *       producing a compact execution plan per txn
+ *   8.  Transfer execution params + plans to executor buffers
+ *   9.  Launch epoch execution kernels (reads, writes, commits)
+ *
+ * Every region is timed and logged so micro-benchmarks can report
+ *   “indexing  = X µs,   init = Y µs,   execute = Z µs”.
+ * The pipeline processes epoch e-1 while the host prepares epoch e,
+ * maximising overlap between PCIe copies and GPU compute.
+ */
 void TpccDb::runBenchmark()
 {
     auto &logger = Logger::GetInstance();
     std::chrono::high_resolution_clock::time_point start_time, end_time;
-    for (uint32_t epoch_id = 1; epoch_id <= config.epochs; ++epoch_id)
+    for (uint32_t epoch_id = 1; epoch_id <= config.epochs; ++epoch_id)            // Loop over all epochs
     {
         logger.Info("Running epoch {}", epoch_id);
 
@@ -355,18 +439,28 @@ void TpccDb::runBenchmark()
             end_time = std::chrono::high_resolution_clock::now();
             logger.Info("Epoch {} cpu aux index time: {} us", epoch_id,
                 std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count());
+
+            /*
+            The project migrated to a GPU-resident B-link tree (gpu_aux_index) which is orders of magnitude faster.
+
+            The CPU version is left in the codebase only for regression experiments and A/B timing, 
+            so the timing block remains but the function calls are disabled.
+            */
         }
 
         /* transfer */
+        /*
+        Copy packed transactions of epoch e-1 to GPU and build GPU-friendly views
+        */
         {
             start_time = std::chrono::high_resolution_clock::now();
-            uint32_t index_epoch_id = epoch_id - 1;
-            input_index_bridge.Link(txn_array[index_epoch_id], index_input);
-            input_index_bridge.StartTransfer();
+            uint32_t index_epoch_id = epoch_id - 1; // take the previous epoch's txns
+            input_index_bridge.Link(txn_array[index_epoch_id], index_input); // Link where the source is the transaction array, and the destination is the index input
+            input_index_bridge.StartTransfer(); // transfer transactions to the index input
             input_index_bridge.FinishTransfer();
-
-            packed_txn_array_builder.buildPackedTxnArrayGpu(index_input, index_output);
-            packed_txn_array_builder.buildPackedTxnArrayGpu(index_input, initialization_output);
+            // Index output for the primary hash index to use. Essentially, index_output just holds the indexes of each transaction in the transaction array.
+            packed_txn_array_builder.buildPackedTxnArrayGpu(index_input, index_output); 
+            packed_txn_array_builder.buildPackedTxnArrayGpu(index_input, initialization_output); // fed to the execution-plan builders; they also prefer the packed layout
 
 #if 0 // DEBUG
             {
@@ -392,12 +486,28 @@ void TpccDb::runBenchmark()
                 std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count());
         }
 
+
+        /* ──────────────────────── GPU auxiliary-index phase ───────────────────────── */
+        /* The “aux index” is a *separate* GPU B-link-tree that supports the             */
+        /* range-style lookups TPCC needs (                                                     */
+        /*   – “latest order of customer C” (ORDER-STATUS)                                 */
+        /*   – “oldest new-order per district”  (DELIVERY)                                 */
+        /*   – “20 most recent orders”          (STOCK-LEVEL)                              */
+        /* ) faster than doing a full hash-table probe + table scan.                        */
+        
         /* gpu aux index */
         {
 
             start_time = std::chrono::high_resolution_clock::now();
             uint32_t index_epoch_id = epoch_id - 1;
-
+            /*  Apply INSERT-only mutations produced by epoch e-1                         *
+            *     ------------------------------------------------------------------------ *
+            *  Each NEW_ORDER txn creates:                                                 *
+            *    key = (w,d,c,/**descending** o_id)  value = dummy (0)                    *
+            *  The kernel:                                                                 *
+            *    • bulk-inserts those keys into the GPU B-link-tree (`co_btree`)           *
+            *    • caches ‘num_items’, ‘customer_id’ and 15 item IDs into three flat       *
+            *      side arrays for later use by range queries.                             */
             gpu_aux_index.insertTxnUpdates(index_input, index_epoch_id);
 
             end_time = std::chrono::high_resolution_clock::now();
@@ -405,6 +515,16 @@ void TpccDb::runBenchmark()
                 std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count());
 
             start_time = std::chrono::high_resolution_clock::now();
+            /*  Satisfy RANGE queries required for epoch e-1 txns                         *
+            *     ------------------------------------------------------------------------ *
+            *  Using the freshly updated B-tree + caches, a second kernel walks every      *
+            *  ORDER-STATUS / DELIVERY / STOCK-LEVEL txn in **index_input** and:           *
+            *      • looks up / scans the tree                                             *
+            *      • writes the answers (latest O_ID, customer id, unique item IDs …)      *
+            *        directly into the corresponding *parameter block* inside              *
+            *        **index_output**                                                     *
+            *  Doing this now means the later hash-index pass and execution planner        *
+            *  already see the range-query results without extra work.                     */
             gpu_aux_index.performRangeQueries(index_input, index_output, index_epoch_id);
             end_time = std::chrono::high_resolution_clock::now();
             logger.Info("Epoch {} gpu aux index part2 time: {} us", epoch_id,
@@ -415,6 +535,10 @@ void TpccDb::runBenchmark()
         {
             start_time = std::chrono::high_resolution_clock::now();
             uint32_t index_epoch_id = epoch_id - 1;
+            /*
+            Updates the primary hash tables with new rows generated in the current epoch
+            Translates every logical key inside the transactions of epoch e-1 into concrete rowIDs, storing them into index_output
+            */
             index->indexTxns(index_input, index_output, index_epoch_id);
             end_time = std::chrono::high_resolution_clock::now();
             logger.Info("Epoch {} indexing time: {} us", epoch_id,
@@ -423,6 +547,19 @@ void TpccDb::runBenchmark()
 
         /* transfer */
         {
+            /* `index_initialization_bridge` was linked earlier like so:
+                index_initialization_bridge.Link(index_output, initialization_input);
+
+            • **index_output**         – PackedTxnArray<TpccTxnParam> that now contains *fully-bound* param blocks
+                                            (written a few lines above by `index->indexTxns()`).
+                                            It lives on the **index device** (CPU if you chose the CPU indexer,
+                                            GPU if you chose the GPU indexer).
+
+            • **initialization_input** – Another PackedTxnArray<TpccTxnParam> located on the
+                                            **initialisation device** (always the GPU in the current build).
+                                            Execution-planner kernels will read from this buffer next.
+
+            The bridge abstracts away the nasty `cudaMemcpyAsync` vs. `memcpy` dance.          */
             start_time = std::chrono::high_resolution_clock::now();
             index_initialization_bridge.StartTransfer();
             index_initialization_bridge.FinishTransfer();
@@ -465,7 +602,40 @@ void TpccDb::runBenchmark()
         }
 
         /* submit */
+        /* ────────────────────── “submission” step ─────────────────────────── */
+        /* Tell every per-table **execution-planner** how many row‐operations     *
+        * the coming epoch will issue, and copy that metadata into their         *
+        * GPU scratch buffers.                                                   *
+        *                                                                        *
+        * After this step the planners can allocate/resize internal arrays       *
+        * and build record-location maps without re-scanning the whole workload. */
         {
+            /* 
+            `initialization_input` is a PackedTxnArray<TpccTxnParam>, already on the GPU.
+            It contains, for every transaction of epoch e, the fully-bound *parameter block*
+            that tells the execution-planner kernels which row-IDs the txn will touch.
+            
+            `submitter` is a <TpccSubmitter<TpccTxnParamArrayT>> created in the
+            constructor with one “TableSubmitDest” per TPCC table:
+
+                    SubmitDest {
+                        d_num_ops        ←  global counter   (GPU)
+                        d_op_offsets     ←  prefix-sum array (GPU)
+                        d_submitted_ops  ←  op list buffer   (GPU)
+                        d_scratch_array  ←  temporary byte-arena
+                        scratch_bytes    ←  its size
+                        curr_num_ops     ←  host mirror of d_num_ops
+                    }
+
+            The submitter walks **initialization_input** (the packed array of
+            `TpccTxnParam` we just copied to the GPU) and, for every *logical*
+            read / write in every transaction:
+
+                • increments the matching table’s `d_num_ops`
+                • appends a compact <rowID, op-type> entry into `d_submitted_ops`
+
+            All updates are done with atomic adds inside a CUDA kernel so the
+            whole pass is a single GPU launch. */
             start_time = std::chrono::high_resolution_clock::now();
             submitter->submit(initialization_input);
             end_time = std::chrono::high_resolution_clock::now();

@@ -22,6 +22,18 @@ Both bridges allow transactions to move between different devices (CPU ↔ GPU)
 
 namespace epic {
 
+/**
+ * POD describing a single bulk-copy operation prepared by a TxnBridge.
+ *
+ * After `Link()` is called the bridge fills in:
+ *   • `src_type` / `dst_type`   – CPU or GPU endpoint
+ *   • `txn_size`                – bytes per transaction
+ *   • `num_txns`                – total transactions to copy
+ *   • `src_ptr` / `dest_ptr`    – base addresses of the contiguous blob
+ *
+ * It is **not used directly** by client code; it simply groups parameters
+ * that the internal copy helpers consume.
+ */
 struct TxnBridgeStorage
 {
     DeviceType src_type;
@@ -32,6 +44,20 @@ struct TxnBridgeStorage
     uint8_t *dest_ptr;
 };
 
+/**
+ * Thin convenience wrapper for copying a *plain* `TxnArray<T>` between devices.
+ *
+ * Typical life-cycle
+ * ------------------
+ *   1. `Link(src, dst)`  – remember pointers, decide CPU↔GPU direction,
+ *                          create a CUDA stream if either side is on the GPU.
+ *   2. `StartTransfer()` – enqueue an async memcpy (host↔device or device↔host).
+ *   3. Do other work on the CPU while the copy runs.
+ *   4. `FinishTransfer()` – sync the stream so the caller knows the data is visible.
+ *
+ * If `src.device == dst.device` the bridge just repoints `dst.txns`
+ * to the existing buffer – no copy is issued.
+ */
 class TxnBridge
 {
     DeviceType src_type = DeviceType::CPU;
@@ -42,6 +68,14 @@ class TxnBridge
     void *dest_ptr = nullptr;
     std::any copy_stream; /* used for GPU only */
 public:
+
+    /**
+     * Bind a **source** and **destination** `TxnArray<T>`.
+     * Ensures both arrays are initialised, sets internal bookkeeping
+     * fields and allocates a CUDA stream on first GPU use.
+     *
+     * Throws if the two arrays disagree on `num_txns`.
+     */
     template<typename TxnType>
     void Link(TxnArray<TxnType> &src, TxnArray<TxnType> &dest)
     {
@@ -101,10 +135,34 @@ public:
         }
     }
 
+    /**
+     * Kick off the bulk copy recorded in `Link()`.
+     * CPU↔CPU            → nothing to do
+     * GPU↔GPU (same dev) → nothing to do
+     * CPU→GPU            → `cudaMemcpyAsync` on `copy_stream`
+     * GPU→CPU            → same in the other direction
+     */
     virtual void StartTransfer();
+
+    /** Block until the async copy launched in `StartTransfer()` is finished. */
     virtual void FinishTransfer();
 };
 
+
+/**
+ * Bridge variant for **PackedTxnArray<T>** where every epoch’s transactions
+ * are stored as one variable-length blob plus an index[] table and a
+ * `size` field that records the current packed byte-length.
+ *
+ * Responsibilities are the same as `TxnBridge`, but it must copy
+ * *three* pieces of state atomically:
+ *   • packed   byte blob  (`txns`)
+ *   • per-txn  offset list (`index`)
+ *   • current  packed size (`size`)
+ *
+ * When the endpoints are on the same device the bridge again aliases the
+ * destination pointers to source memory instead of copying.
+ */
 class PackedTxnBridge
 {
     DeviceType src_type = DeviceType::CPU;
@@ -120,6 +178,12 @@ class PackedTxnBridge
     uint32_t *dest_size_ptr = nullptr;
     std::any copy_stream; /* used for GPU only */
 public:
+
+    /**
+     * Bind a packed source and destination.  Verifies `num_txns`
+     * match, allocates buffers if the destination is still empty,
+     * sets internal pointers and initialises a CUDA stream on first use.
+     */
     template<typename TxnType>
     void Link(PackedTxnArray<TxnType> &src, PackedTxnArray<TxnType> &dest)
     {
@@ -182,6 +246,13 @@ public:
         }
     }
 
+    /**
+     * Enqueue the appropriate memcpy:
+     *  - CPU→CPU or GPU→GPU (same dev): no-op
+     *  - GPU→CPU: read back `size`, then copy `txns` and `index`
+     *  - CPU→GPU: copy `txns` and `index`, propagate `size`
+     */
+
     virtual void StartTransfer()
     {
         auto &logger = Logger::GetInstance();
@@ -217,6 +288,9 @@ public:
         }
     }
 
+    /**
+     * Synchronise the CUDA stream if a GPU was involved; otherwise no-op.
+     */
     virtual void FinishTransfer()
     {
         if (src_type == DeviceType::CPU && dst_type == DeviceType::CPU)

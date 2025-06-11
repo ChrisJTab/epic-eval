@@ -1,6 +1,9 @@
 //
 // Created by Shujian Qian on 2023-10-25.
 //
+/*
+This file contains the code necessary for executing TPCC transactions on the GPU, according to the specifications of TPCC.
+*/
 
 #include "tpcc_gpu_txn.cuh"
 
@@ -197,6 +200,11 @@ void __device__ __forceinline__ gpuExecTpccTxn(TpccRecords records, TpccVersions
     uint32_t result;
     for (int i = 0; i < 10; ++i)
     {
+        /*
+        This is the cooperative memory access talked about in the paper
+        This is GPU specific, as its better to load memory in big chunks, so here multiple threads read from the GPU
+        These are found in gpu_storage.cuh, and the paper mentions how to read from which version.
+        */
         gpuReadFromTableCoop(records.new_order_record, versions.new_order_version, params->new_order_id[i],
             plan->new_order_read_locs[i], epoch, result, lane_id);
 
@@ -333,6 +341,10 @@ __global__ void gpuExecKernel(TpccRecords records, TpccVersions versions, GpuTxn
     BaseTxn *exec_plan_ptr = plan.getTxn(warp_txn_id);
 
     /* execute the txn */
+    /*
+    Note that we are also caching the transaction if it fits in the shared memory
+    This is better for memory access because we are constantly reading from the transaction itself
+    */
     switch (static_cast<TpccTxnType>((reinterpret_cast<BaseTxn *>(txn_param_ptr)->txn_type)))
     {
     case TpccTxnType::NEW_ORDER:

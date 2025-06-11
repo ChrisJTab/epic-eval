@@ -38,6 +38,9 @@ constexpr op_t offset_shift = 0;
 constexpr op_t read_op = 0x0ull;
 constexpr op_t write_op = 0x1ull;
 
+/*
+The operations created are ordered so that when you sort them, they are sorted by record_id, then by txn_id, then by r_w, and finally by offset.
+*/
 #define CREATE_OP(record_id, txn_id, r_w, offset) \
     (((op_t)(record_id) << record_id_shift) | ((op_t)(txn_id) << txn_id_shift) | ((op_t)(r_w) << r_w_shift) | ((op_t)(offset) << offset_shift));
 #define GET_RECORD_ID(op) (((op_t)(op)&record_id_mask) >> record_id_shift)

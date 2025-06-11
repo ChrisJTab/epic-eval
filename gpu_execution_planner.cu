@@ -185,6 +185,10 @@ __global__ void scatterRWLocation(op_t *sorted_ops, OperationT *op_types, uint32
 }
 } // namespace
 
+
+/*
+This is pretty much cuda code for executing all the steps written in the paper to get an execution plan for a table.
+*/
 template <typename TxnExecPlanArrayType>
 void GpuTableExecutionPlanner<TxnExecPlanArrayType>::InitializeExecutionPlan()
 {

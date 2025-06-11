@@ -46,7 +46,31 @@ void TpccPackedTxnArrayBuilder::buildPackedTxnArrayGpu(PackedTxnArray<TpccTxn> &
 {
     constexpr uint32_t block_size = 512;
     uint32_t num_blocks = (num_txns + block_size - 1) / block_size;
+    /*
+    kernel: compute **payload byte-length** of every Txn in the source array
+
+    Each thread inspects one source TpccTxn, determines which TPCC transaction type it is and 
+    therefore how many bytes its parameter struct (TpccTxnParam) will occupy when copied, 
+    and writes that size into txn_sizes[i]
+
+    txn_sizes[i] now holds the variable-length payload size for txn i.
+
+    [5, 10, 11, 9, 8]
+    */
     calcTxnParamsSizes<<<num_blocks, block_size>>>(GpuPackedTxnArray(src), txn_sizes, src.num_txns);
+
+
+    /*
+
+    Computes an inclusive prefix sum of those sizes directly on the GPU. 
+    The scan output is written starting at dest.index[1]; dest.index[0] remains 0.
+
+    After the scan:
+        - dest.index[i] = byte offset of payload (i-1) inside the soon-to-be-packed blob;
+        - dest.index[num_txns] = total packed byte length (needed later to allocate/copy the blob).   
+    
+    [0, 5, 15, 26, 35, 43]
+    */
     cub::DeviceScan::InclusiveSum(temp_storage, temp_storage_bytes, txn_sizes, dest.index + 1, num_txns);
     gpu_err_check(cudaDeviceSynchronize());
 }
