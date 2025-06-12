@@ -637,6 +637,7 @@ void TpccDb::runBenchmark()
             All updates are done with atomic adds inside a CUDA kernel so the
             whole pass is a single GPU launch. */
             start_time = std::chrono::high_resolution_clock::now();
+            // submit pretty much stores all of the transactions in an array so we can do all the operations on them later in the execution planner
             submitter->submit(initialization_input);
             end_time = std::chrono::high_resolution_clock::now();
             logger.Info("Epoch {} submission time: {} us", epoch_id,
@@ -646,6 +647,10 @@ void TpccDb::runBenchmark()
         /* initialize */
         {
             start_time = std::chrono::high_resolution_clock::now();
+
+            /*
+            This is where the execution planners take over, like where in the paper it did all of the scans, sorting, etc.
+            */
 
             warehouse_planner->InitializeExecutionPlan();
             district_planner->InitializeExecutionPlan();
@@ -734,6 +739,9 @@ void TpccDb::runBenchmark()
         }
 
         /* transfer */
+        /*
+        This step is a transfer to get the initialization execution plan to the execution input(the execution phase)
+        */
         {
             start_time = std::chrono::high_resolution_clock::now();
             index_execution_param_bridge.StartTransfer();
@@ -780,7 +788,9 @@ void TpccDb::runBenchmark()
             }
 #endif
             start_time = std::chrono::high_resolution_clock::now();
-
+            /*
+            actually executes... the executor can be either GpuExecutor or CpuExecutor, depending on the config
+            */
             executor->execute(epoch_id);
 
             end_time = std::chrono::high_resolution_clock::now();

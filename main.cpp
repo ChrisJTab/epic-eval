@@ -177,9 +177,9 @@ int main(int argc, char **argv)
             }
             break;
         case 'e': // this case is for the number of epochs
-                // an epoch is a period of time in which all transactions are executed
+                 // an epoch is a period of time in which all transactions are executed
                 // the more epochs there are, the more transactions are executed
-                // the less epochs there are, the less transactions are executed
+               // the less epochs there are, the less transactions are executed
             errno = 0;
             tpcc_config.epochs = strtoul(optarg, &end_char, 0);
             ycsb_config.epochs = tpcc_config.epochs;
@@ -189,7 +189,7 @@ int main(int argc, char **argv)
             }
             break;
         case 's': // this case is for the number of transactions
-                // the number of transactions is the number of transactions that are executed
+                // the number of transactions is the number of transactions that are executed per epoch
             errno = 0;
             tpcc_config.num_txns = strtoul(optarg, &end_char, 0);
             ycsb_config.num_txns = tpcc_config.num_txns;
