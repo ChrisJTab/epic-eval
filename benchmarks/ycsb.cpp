@@ -56,6 +56,7 @@ YcsbBenchmark::YcsbBenchmark(YcsbConfig config)
             records = static_cast<YcsbFieldRecords *>(allocator.Allocate(record_size));
             logger.Info("Field-split record size: {}", formatSizeBytes(record_size));
             size_t version_size = sizeof(YcsbFieldVersions) * config.num_records * 10;
+            logger.Info("Field-split version size: {}", formatSizeBytes(version_size));
             versions = static_cast<YcsbFieldVersions *>(allocator.Allocate(version_size));
             logger.Info("Field-split version size: {}", formatSizeBytes(version_size));
         }
