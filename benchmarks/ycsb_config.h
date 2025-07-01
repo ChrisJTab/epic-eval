@@ -40,7 +40,7 @@ struct YcsbConfig
     } txn_mix;
     size_t num_records = 2'500'000;
     size_t num_txns = 100'000;
-    size_t starting_num_records = 2'500'000;
+    size_t starting_num_records = 2'000'000;
     size_t epochs = 20;
     double skew_factor = 0.0;
     DeviceType index_device = DeviceType::GPU;
