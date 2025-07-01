@@ -140,7 +140,7 @@ public:
     void loadInitialData()
     {
         auto &logger = Logger::GetInstance();
-        logger.Info("Loading initial data");
+        logger.Info("Loading initial data(ycsb)");
 
         thrust::device_vector<uint32_t> d_keys(ycsb_config.starting_num_records);
         thrust::device_vector<uint32_t> d_values(ycsb_config.starting_num_records);
