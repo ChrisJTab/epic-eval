@@ -6,6 +6,7 @@
 #include <gpu_txn.cuh>
 #include <util_warp_memory.cuh>
 #include "gpu_storage.cuh"
+#include "util_log.h"
 
 #define EPIC_SINGLE_THREAD_EXEC
 #undef EPIC_SINGLE_THREAD_EXEC
@@ -415,7 +416,10 @@ __global__ void gpuNoSplitThreadPiecewiseExecKernel(YcsbConfig config, void *rec
 void GpuExecutor::execute(uint32_t epoch)
 {
     /* clear the txn_counter */
+    auto &logger = Logger::GetInstance();
+    logger.Info("error check before executing GPU kernel");
     gpu_err_check(cudaMemcpyToSymbol(txn_counter, &zero, sizeof(uint32_t)));
+    logger.Info("error check after executing GPU kernel");
 
 #ifndef EPIC_SINGLE_THREAD_EXEC
     uint32_t num_blocks = (config.num_txns * 10 * kDeviceWarpSize + block_size - 1) / block_size;
