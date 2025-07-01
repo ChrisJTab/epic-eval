@@ -146,8 +146,11 @@ public:
         thrust::device_vector<uint32_t> d_values(ycsb_config.starting_num_records);
         thrust::sequence(d_keys.begin(), d_keys.end(), 0);
         thrust::sequence(d_values.begin(), d_values.end(), 0);
+        logger.Info("Made it past sequences");
         auto zipped_kv = thrust::make_zip_iterator(thrust::make_tuple(d_keys.begin(), d_values.begin()));
+        logger.Info("Inserting initial data into index");
         index->insert(zipped_kv, zipped_kv + ycsb_config.starting_num_records);
+        logger.Info("Inserted {} initial records into index", ycsb_config.starting_num_records);
 
         thrust::device_vector<uint32_t> found_values(ycsb_config.starting_num_records);
         index->find(d_keys.begin(), d_keys.end(), found_values.begin());
