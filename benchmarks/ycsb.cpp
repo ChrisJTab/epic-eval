@@ -252,8 +252,10 @@ void YcsbBenchmark::runBenchmark()
         /* execution */
         {
             start_time = std::chrono::high_resolution_clock::now();
+            logger.Info("Executing epoch {}", epoch_id);
 
             executor->execute(epoch_id);
+            logger.Info("Epoch {} execution finished", epoch_id);
 
             end_time = std::chrono::high_resolution_clock::now();
             logger.Info("Epoch {} execution time: {} us", epoch_id,
