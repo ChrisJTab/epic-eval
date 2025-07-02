@@ -423,12 +423,16 @@ void GpuExecutor::execute(uint32_t epoch)
 
 #ifndef EPIC_SINGLE_THREAD_EXEC
     uint32_t num_blocks = (config.num_txns * 10 * kDeviceWarpSize + block_size - 1) / block_size;
+    logger.Info("Launching GPU kernel with %u blocks and %u threads per block", num_blocks, block_size);
     if (config.split_field)
     {
         gpuPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
             reinterpret_cast<void *>(std::get<YcsbFieldRecords *>(records)),
             reinterpret_cast<void *>(std::get<YcsbFieldVersions *>(versions)), GpuTxnArray(txn), GpuTxnArray(plan),
             config.num_txns, epoch);
+        
+        gpu_err_check(cudaPeekAtLastError());
+        gpu_err_check(cudaDeviceSynchronize());
     }
     else
     {
@@ -436,9 +440,14 @@ void GpuExecutor::execute(uint32_t epoch)
             reinterpret_cast<void *>(std::get<YcsbRecords *>(records)),
             reinterpret_cast<void *>(std::get<YcsbVersions *>(versions)), GpuTxnArray(txn), GpuTxnArray(plan),
             config.num_txns, epoch);
+            
+        gpu_err_check(cudaPeekAtLastError());
+        gpu_err_check(cudaDeviceSynchronize());
     }
 #else
+    
     uint32_t num_blocks = (config.num_txns * 10 + block_size - 1) / block_size;
+    logger.Info("Launching GPU kernel with %u blocks and %u threads per block", num_blocks, block_size);
     gpuNoSplitThreadPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
         reinterpret_cast<void *>(std::get<YcsbRecords *>(records)),
         reinterpret_cast<void *>(std::get<YcsbVersions *>(versions)), GpuTxnArray(txn), GpuTxnArray(plan),
