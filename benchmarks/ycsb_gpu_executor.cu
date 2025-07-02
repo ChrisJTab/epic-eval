@@ -423,7 +423,7 @@ void GpuExecutor::execute(uint32_t epoch)
 
 #ifndef EPIC_SINGLE_THREAD_EXEC
     uint32_t num_blocks = (config.num_txns * 10 * kDeviceWarpSize + block_size - 1) / block_size;
-    logger.Info("Launching GPU kernel with {} blocks and {} threads per block", num_blocks, block_size);
+    logger.Info("Launching GPU kernel with {} blocks and {} threads per block(single thread exec)", num_blocks, block_size);
     if (config.split_field)
     {
         gpuPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
