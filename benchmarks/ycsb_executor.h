@@ -15,15 +15,13 @@ namespace epic::ycsb {
 class Executor
 {
 public:
-    YcsbRecordArrType records;
-    YcsbVersionArrType versions;
+    std::variant<YcsbFullLayout, YcsbSplitLayout> layout;
     TxnArray<YcsbTxnParam> txn;
     TxnArray<YcsbExecPlan> plan;
     YcsbConfig config;
-    Executor(YcsbRecordArrType records, YcsbVersionArrType versions, TxnArray<YcsbTxnParam> txn,
+    Executor(std::variant<YcsbFullLayout, YcsbSplitLayout> lay, TxnArray<YcsbTxnParam> txn,
         TxnArray<YcsbExecPlan> plan, YcsbConfig config)
-        : records(records)
-        , versions(versions)
+        : layout(std::move(lay))
         , txn(txn)
         , plan(plan)
         , config(config)

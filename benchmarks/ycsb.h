@@ -26,6 +26,8 @@ namespace epic::ycsb {
 class YcsbBenchmark : public Benchmark
 {
 public:
+
+
     YcsbConfig config;
 
     std::vector<TxnArray<YcsbTxn>> txn_array;
@@ -45,8 +47,13 @@ public:
     std::shared_ptr<TableExecutionPlanner> planner;
     std::shared_ptr<YcsbSubmitter> submitter;
 
-    YcsbVersionArrType versions;
-    YcsbRecordArrType records;
+    YcsbVersionArrType GpuVersions;
+    YcsbVersionArrType CpuVersions;
+    YcsbRecordArrType GpuRecords;
+    YcsbRecordArrType CpuRecords;
+
+    using GenericLayout = std::variant<YcsbFullLayout, YcsbSplitLayout>;
+    GenericLayout layout_;
 
     std::shared_ptr<Executor> executor;
 

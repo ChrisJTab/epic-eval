@@ -12,9 +12,12 @@ namespace epic::ycsb {
 class CpuExecutor : public Executor
 {
 public:
-    CpuExecutor(YcsbRecordArrType records, YcsbVersionArrType versions, TxnArray<YcsbTxnParam> txn,
+    // Note that there is no split layout
+    using FullLayout = YcsbFullLayout;   // for full-field YCSB
+
+    CpuExecutor(FullLayout layout, TxnArray<YcsbTxnParam> txn,
         TxnArray<YcsbExecPlan> plan, YcsbConfig config)
-        : Executor(records, versions, txn, plan, config){};
+        : Executor(std::move(layout), txn, plan, config){};
     ~CpuExecutor() override = default;
 
     void execute(uint32_t epoch) override;

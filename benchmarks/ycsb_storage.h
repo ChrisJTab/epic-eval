@@ -11,6 +11,22 @@
 
 namespace epic::ycsb {
 
+enum class RecordTier : uint8_t { GPU, CPU };
+
+template <typename RecT, typename VerT>
+struct RecordSlice {
+    RecordTier  tier;        // GPU or CPU
+    RecT*       rec_base;    // base pointer for Record<…>
+    VerT*       ver_base;    // base pointer for Version<…>
+    uint64_t    count;       // #records in this slice
+};
+
+template <typename RecT, typename VerT>
+struct TwoTierLayout {
+    RecordSlice<RecT,VerT> gpu{};
+    RecordSlice<RecT,VerT> cpu{};
+};
+
 using YcsbVersions = Version<YcsbValue>;
 using YcsbRecords = Record<YcsbValue>;
 
@@ -19,6 +35,9 @@ using YcsbFieldRecords = Record<YcsbFieldValue>;
 
 using YcsbVersionArrType = std::variant<YcsbVersions *, YcsbFieldVersions *>;
 using YcsbRecordArrType = std::variant<YcsbRecords *, YcsbFieldRecords *>;
+
+using YcsbSplitLayout = TwoTierLayout<YcsbFieldRecords, YcsbFieldVersions>; // for split-field YCSB
+using YcsbFullLayout = TwoTierLayout<YcsbRecords, YcsbVersions>;
 
 }
 

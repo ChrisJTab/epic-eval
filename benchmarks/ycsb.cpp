@@ -15,6 +15,7 @@
 #include <benchmarks/ycsb_gpu_executor.h>
 #include <benchmarks/ycsb_cpu_executor.h>
 
+
 namespace epic::ycsb {
 
 YcsbBenchmark::YcsbBenchmark(YcsbConfig config)
@@ -32,7 +33,11 @@ YcsbBenchmark::YcsbBenchmark(YcsbConfig config)
     {
         txn_array[i] = TxnArray<YcsbTxn>(config.num_txns, DeviceType::CPU);
     }
-    index = std::make_shared<YcsbGpuIndex>(config);
+    index = std::make_shared<YcsbGpuIndex>(config); // This seems to be the problem code before the last "Allocating x bytes for GPU txn array
+    // I now want to test a good version of the benchmark and figure out where exactly the next "Allocating x bytes for GPU txn array" is found
+    // Then, I want to properly understand where the first 2 "Allocating x bytes for GPU txn array" are found, I think they stem from calling initialization input and output in the constructor... but why?
+    // Then, I want to do a normal run and see if it is actually this YCSBgpuIndex line that is actually the issue here.
+    // Once again, remember that I'm trying to find where we are using too much memory, and how to bypass this by storing stuff in the CPU
     input_index_bridge.Link(txn_array[0], index_input);
     index_initialization_bridge.Link(index_output, initialization_input);
     index_execution_param_bridge.Link(index_output, execution_param_input);
@@ -52,29 +57,114 @@ YcsbBenchmark::YcsbBenchmark(YcsbConfig config)
     {
         if (config.split_field)
         {
+            YcsbSplitLayout layout;
+
             size_t record_size = sizeof(YcsbFieldRecords) * config.num_records * 10;
-            records = static_cast<YcsbFieldRecords *>(allocator.Allocate(record_size));
-            logger.Info("Field-split record size: {}", formatSizeBytes(record_size));
             size_t version_size = sizeof(YcsbFieldVersions) * config.num_records * 10;
-            versions = static_cast<YcsbFieldVersions *>(allocator.Allocate(version_size));
+
+            logger.Info("Field-split record size: {}", formatSizeBytes(record_size));
             logger.Info("Field-split version size: {}", formatSizeBytes(version_size));
+
+            size_t free, total;
+            allocator.GetMemoryInfo(free, total);
+            // keep 512 MB free for the GPU
+            constexpr size_t kSafety  = 512 * (1ull << 20);
+            size_t usable = (free > kSafety) ? (free - kSafety) : 0;
+            size_t bytes_per_rec = sizeof(YcsbFieldRecords) + sizeof(YcsbFieldVersions);
+            uint64_t max_gpu_recs = usable / bytes_per_rec;           // how many <rec,ver> pairs can we still fit
+            uint64_t gpu_recs     = std::min<uint64_t>(max_gpu_recs, config.num_records);
+            uint64_t host_recs    = config.num_records - gpu_recs;
+            if (gpu_recs > 0)
+            {
+                    GpuRecords = static_cast<YcsbFieldRecords *>(allocator.Allocate(sizeof(YcsbFieldRecords) * gpu_recs));
+                    GpuVersions = static_cast<YcsbFieldVersions *>(allocator.Allocate(sizeof(YcsbFieldVersions) * gpu_recs));
+
+
+                    layout.gpu.tier     = RecordTier::GPU;
+                    layout.gpu.rec_base = std::get<YcsbFieldRecords *>(GpuRecords);
+                    layout.gpu.ver_base = std::get<YcsbFieldVersions *>(GpuVersions);
+                    layout.gpu.count    = gpu_recs;
+
+                    logger.Info("GPU Slice: {} records; ({}, {})", gpu_recs,
+                    formatSizeBytes(sizeof(YcsbFieldRecords) * gpu_recs), formatSizeBytes(sizeof(YcsbFieldVersions) * gpu_recs));
+
+                    layout_ = layout;
+            }
+            if (host_recs > 0)
+            {
+                CpuRecords = static_cast<YcsbFieldRecords *>(Malloc(sizeof(YcsbFieldRecords) * host_recs));
+                CpuVersions = static_cast<YcsbFieldVersions *>(Malloc(sizeof(YcsbFieldVersions) * host_recs));
+
+                layout.cpu.tier    = RecordTier::CPU;
+                layout.cpu.rec_base = std::get<YcsbFieldRecords *>(CpuRecords);
+                layout.cpu.ver_base = std::get<YcsbFieldVersions *>(CpuVersions);
+                layout.cpu.count    = host_recs;
+
+                logger.Info("CPU Slice: {} records; ({}, {})", host_recs,
+                formatSizeBytes(sizeof(YcsbFieldRecords) * host_recs), formatSizeBytes(sizeof(YcsbFieldVersions) * host_recs));
+
+                layout_ = layout;
+            }
+
         }
         else
         {
             size_t record_size = sizeof(YcsbRecords) * config.num_records;
-            records = static_cast<YcsbRecords *>(allocator.Allocate(record_size));
-            logger.Info("Record size: {}", formatSizeBytes(record_size));
             size_t version_size = sizeof(YcsbVersions) * config.num_records;
-            versions = static_cast<YcsbVersions *>(allocator.Allocate(version_size));
-            logger.Info("Version size: {}", formatSizeBytes(version_size));
-        }
-        allocator.PrintMemoryInfo();
 
-        executor =
-            std::make_shared<GpuExecutor>(records, versions, execution_param_input, execution_plan_input, config);
-        //        executor =
-        //            std::make_shared<GpuExecutor>(records, versions, initialization_input, initialization_output,
-        //            config);
+            YcsbFullLayout layout;
+
+
+            logger.Info("Record size: {}", formatSizeBytes(record_size));
+            logger.Info("Version size: {}", formatSizeBytes(version_size));
+            size_t free, total;
+            allocator.GetMemoryInfo(free, total);
+            // keep 512 MB free for the GPU
+            constexpr size_t kSafety  = 512 * (1ull << 20);
+            size_t usable = (free > kSafety) ? (free - kSafety) : 0;
+            size_t bytes_per_rec = sizeof(YcsbRecords) + sizeof(YcsbVersions);
+            uint64_t max_gpu_recs = usable / bytes_per_rec;           // how many <rec,ver> pairs can we still fit
+            uint64_t gpu_recs     = std::min<uint64_t>(max_gpu_recs, config.num_records);
+            uint64_t host_recs    = config.num_records - gpu_recs;
+            if (gpu_recs > 0)
+            {
+
+                GpuRecords = static_cast<YcsbRecords *>(allocator.Allocate(sizeof(YcsbRecords) * gpu_recs));
+                GpuVersions = static_cast<YcsbVersions *>(allocator.Allocate(sizeof(YcsbVersions) * gpu_recs));
+
+                layout.gpu.tier     = RecordTier::GPU;
+                layout.gpu.rec_base = std::get<YcsbRecords *>(GpuRecords);
+                layout.gpu.ver_base = std::get<YcsbVersions *>(GpuVersions);
+                layout.gpu.count    = gpu_recs;
+
+                logger.Info("GPU Slice: {} records; ({}, {})", gpu_recs,
+                    formatSizeBytes(sizeof(YcsbRecords) * gpu_recs), formatSizeBytes(sizeof(YcsbVersions) * gpu_recs));
+
+                layout_ = layout;
+
+            }
+            if (host_recs > 0)
+            {
+                CpuRecords = static_cast<YcsbRecords *>(Malloc(sizeof(YcsbRecords) * host_recs));
+                CpuVersions = static_cast<YcsbVersions *>(Malloc(sizeof(YcsbVersions) *host_recs));
+
+                layout.cpu.tier    = RecordTier::CPU;
+                layout.cpu.rec_base = std::get<YcsbRecords *>(CpuRecords);
+                layout.cpu.ver_base = std::get<YcsbVersions *>(CpuVersions);
+                layout.cpu.count    = host_recs;
+
+                logger.Info("CPU Slice: {} records; ({}, {})", host_recs,
+                    formatSizeBytes(sizeof(YcsbRecords) * host_recs), formatSizeBytes(sizeof(YcsbVersions) * host_recs));
+
+                layout_ = layout;
+            }
+
+        }
+
+        allocator.PrintMemoryInfo();
+        std::visit([&](auto&& lay) {
+            executor = std::make_shared<GpuExecutor>(lay, execution_param_input, execution_plan_input, config);
+        }, layout_);
     }
     else if (config.execution_device == DeviceType::CPU)
     {
@@ -85,16 +175,36 @@ YcsbBenchmark::YcsbBenchmark(YcsbConfig config)
         }
         else
         {
+            YcsbFullLayout layout;
+
             size_t record_size = sizeof(YcsbRecords) * config.num_records;
-            records = static_cast<YcsbRecords *>(Malloc(record_size));
             logger.Info("Record size: {}", formatSizeBytes(record_size));
+            CpuRecords = static_cast<YcsbRecords *>(Malloc(record_size));
             size_t version_size = sizeof(YcsbVersions) * config.num_records;
-            versions = static_cast<YcsbVersions *>(Malloc(version_size));
+            CpuVersions = static_cast<YcsbVersions *>(Malloc(version_size));
             logger.Info("Version size: {}", formatSizeBytes(version_size));
+
+            layout.cpu.tier     = RecordTier::CPU;
+            layout.cpu.rec_base = std::get<YcsbRecords *>(CpuRecords);
+            layout.cpu.ver_base = std::get<YcsbVersions *>(CpuVersions);
+            layout.cpu.count    = config.num_records;
+
+            layout_ = layout;
         }
 
-        executor =
-            std::make_shared<CpuExecutor>(records, versions, execution_param_input, execution_plan_input, config);
+
+        if (std::holds_alternative<YcsbFullLayout>(layout_))
+        {
+            auto &full = std::get<YcsbFullLayout>(layout_);
+            executor = std::make_shared<CpuExecutor>(full,
+                                                     execution_param_input,
+                                                     execution_plan_input,
+                                                     config);
+        }
+        else
+        {
+            throw std::runtime_error("Split-field layout not supported by CPU executor");
+        }
     }
     else
     {

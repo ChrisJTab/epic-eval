@@ -12,9 +12,17 @@ namespace epic::ycsb {
 class GpuExecutor : public Executor
 {
 public:
-    GpuExecutor(YcsbRecordArrType records, YcsbVersionArrType versions, TxnArray<YcsbTxnParam> txn,
+    using SplitLayout = YcsbSplitLayout; // for split-field YCSB
+    using FullLayout = YcsbFullLayout;   // for full-field YCSB
+
+    GpuExecutor(FullLayout layout, TxnArray<YcsbTxnParam> txn,
         TxnArray<YcsbExecPlan> plan, YcsbConfig config)
-        : Executor(records, versions, txn, plan, config){};
+        : Executor(std::move(layout), txn, plan, config){};
+
+    GpuExecutor(SplitLayout layout, TxnArray<YcsbTxnParam> txn,
+    TxnArray<YcsbExecPlan> plan, YcsbConfig config)
+    : Executor(std::move(layout), txn, plan, config){};
+
     ~GpuExecutor() override = default;
 
     void execute(uint32_t epoch) override;

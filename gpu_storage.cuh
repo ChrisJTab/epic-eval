@@ -301,6 +301,10 @@ __forceinline__ __device__ void gpuReadMultipleFromTableCoop(Record<ValueType> *
         {
             bool ready =
                 !(lane_mask & remaining_mask) || epoch_to_read == nullptr || atomicAdd(epoch_to_read, 0) == epoch;
+            // if (lane_id == 0){
+            //     printf("warp %u  mask %08x\n", warp_id, remaining_mask);
+            // }
+            // __syncthreads();                    // keep ordering deterministic
             ready_mask = __ballot_sync(remaining_mask, ready);
         } while (ready_mask == 0);
         remaining_mask &= ~ready_mask;

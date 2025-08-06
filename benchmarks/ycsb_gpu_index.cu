@@ -111,24 +111,38 @@ public:
     explicit YcsbGpuIndexImpl(YcsbConfig ycsb_config)
         : ycsb_config(ycsb_config)
         , index_view(index->get_device_view())
-        , index(std::make_shared<YcsbIndexType>(static_cast<size_t>(std::ceil(ycsb_config.num_records / load_factor)),
+        , index(std::make_shared<YcsbIndexType>(static_cast<size_t>(std::ceil((ycsb_config.num_records) / load_factor)),
               empty_key_sentinel, empty_value_sentinel))
     {
         auto &logger = Logger::GetInstance();
 
         gpu_err_check(cudaMalloc(&d_free_rows, sizeof(uint32_t) * ycsb_config.num_records));
-        dp_free_rows = thrust::device_pointer_cast(d_free_rows);
+        dp_free_rows = thrust::device_pointer_cast(d_free_rows); // Device pointer for free rows
 
         gpu_err_check(cudaMalloc(&d_inserts, sizeof(uint32_t) * ycsb_config.num_txns * ycsb_config.num_ops_per_txn));
         gpu_err_check(
             cudaMalloc(&d_valid_inserts, sizeof(uint32_t) * ycsb_config.num_txns * ycsb_config.num_ops_per_txn));
-        dp_inserts = thrust::device_pointer_cast(d_inserts);
-        dp_valid_inserts = thrust::device_pointer_cast(d_valid_inserts);
+        dp_inserts = thrust::device_pointer_cast(d_inserts); // Device pointer for inserts
+        dp_valid_inserts = thrust::device_pointer_cast(d_valid_inserts); // Device pointer for valid inserts
         gpu_err_check(cudaMalloc(&d_num_insert, sizeof(uint32_t)));
 
         cub::DeviceSelect::If(d_temp_storage, temp_storage_bytes, dp_inserts, dp_valid_inserts, d_num_insert,
-            ycsb_config.num_txns * ycsb_config.num_ops_per_txn, thrust::identity<uint32_t>());
-
+            ycsb_config.num_txns * ycsb_config.num_ops_per_txn, thrust::identity<uint32_t>()); // Allocate temporary storage for cub::DeviceSelect
+        /*
+        * During indexing, Epic fills dp_inserts with a uint32_t per operation slot indicating whether that slot corresponds
+        * to a new key that must be inserted into the GPU index. Convention:
+            - 0 = not an INSERT, or already exists / invalid → filter out.
+            - recordID (or some nonzero flag/ID) = valid INSERT → keep.
+        * The DeviceSelect::If call compacts this sparse bitmap into a tight array (dp_valid_inserts)
+        * containing only the actual keys that need to be inserted into the cuco hash table.
+        * The resulting count goes to d_num_insert.
+        *
+        * 1. Call DeviceSelect::If with d_temp_storage = nullptr (or uninitialized) and temp_storage_bytes = 0
+        * to let CUB tell you how much scratch space it needs.
+        * 2. Allocate d_temp_storage with that many bytes (cudaMalloc).
+        * 3. DeviceSelect::If again with the allocated temp buffer to do the real selection.
+        * This call is the first pass
+         */
         logger.Trace("Allocating {} bytes for temp storage", formatSizeBytes(temp_storage_bytes));
         gpu_err_check(cudaMalloc(&d_temp_storage, temp_storage_bytes));
 

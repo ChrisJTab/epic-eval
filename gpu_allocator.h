@@ -16,6 +16,7 @@ public:
     void *Allocate(size_t size) override;
     void Free(void *ptr) override;
     void PrintMemoryInfo();
+    void GetMemoryInfo(size_t &free, size_t &total);
 };
 } // namespace epic
 

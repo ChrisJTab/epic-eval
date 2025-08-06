@@ -29,4 +29,12 @@ void GpuAllocator::PrintMemoryInfo()
     auto &logger = Logger::GetInstance();
     logger.Info("GPU memory usage: {} / {}", formatSizeBytes(total - free), formatSizeBytes(total));
 }
+
+// create a function to return free and total memory
+void GpuAllocator::GetMemoryInfo(size_t &free, size_t &total)
+{
+    gpu_err_check(cudaMemGetInfo(&free, &total));
+}
+
+
 } // namespace epic

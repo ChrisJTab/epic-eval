@@ -137,7 +137,7 @@ __global__ void gpuPiecewiseExecKernel(YcsbConfig config, void *records, void *v
     __shared__ uint32_t warp_counter;
 
     uint32_t warp_id = threadIdx.x / kDeviceWarpSize;
-    uint32_t lane_id = threadIdx.x % kDeviceWarpSize;
+    uint32_t lane_id = threadIdx.x % kDeviceWarpSize; // this is the issue
     /* one thread loads txn id for the entire warp */
     if (threadIdx.x == 0)
     {
@@ -424,26 +424,30 @@ void GpuExecutor::execute(uint32_t epoch)
 #ifndef EPIC_SINGLE_THREAD_EXEC
     uint32_t num_blocks = (config.num_txns * 10 * kDeviceWarpSize + block_size - 1) / block_size;
     logger.Info("Launching GPU kernel with {} blocks and {} threads per block(single thread exec)", num_blocks, block_size);
-    if (config.split_field)
-    {
-        gpuPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
-            reinterpret_cast<void *>(std::get<YcsbFieldRecords *>(records)),
-            reinterpret_cast<void *>(std::get<YcsbFieldVersions *>(versions)), GpuTxnArray(txn), GpuTxnArray(plan),
-            config.num_txns, epoch);
-        
-        gpu_err_check(cudaPeekAtLastError());
-        gpu_err_check(cudaDeviceSynchronize());
-    }
-    else
-    {
-        gpuNoSplitPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
-            reinterpret_cast<void *>(std::get<YcsbRecords *>(records)),
-            reinterpret_cast<void *>(std::get<YcsbVersions *>(versions)), GpuTxnArray(txn), GpuTxnArray(plan),
-            config.num_txns, epoch);
+    std::visit([&](auto& lay) {
+        auto* rec = lay.gpu.rec_base;
+        auto* ver = lay.gpu.ver_base;
+        if (config.split_field)
+        {
+            gpuPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
+                reinterpret_cast<void *>(rec),
+                reinterpret_cast<void *>(ver), GpuTxnArray(txn), GpuTxnArray(plan),
+                config.num_txns, epoch);
 
-        gpu_err_check(cudaPeekAtLastError());
-        gpu_err_check(cudaDeviceSynchronize());
-    }
+            gpu_err_check(cudaPeekAtLastError());
+            gpu_err_check(cudaDeviceSynchronize());
+        }
+        else
+        {
+            gpuNoSplitPiecewiseExecKernel<<<num_blocks, block_size>>>(config,
+                reinterpret_cast<void *>(rec),
+                reinterpret_cast<void *>(ver), GpuTxnArray(txn), GpuTxnArray(plan),
+                config.num_txns, epoch);
+
+            gpu_err_check(cudaPeekAtLastError());
+            gpu_err_check(cudaDeviceSynchronize());
+        }
+    }, layout);
 #else
     
     uint32_t num_blocks = (config.num_txns * 10 + block_size - 1) / block_size;
